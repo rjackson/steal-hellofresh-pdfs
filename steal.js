@@ -1,67 +1,104 @@
-// import Sitemapper from "sitemapper";
-// import UserAgent from "user-agents";
-
-import { parseStringPromise } from "xml2js";
-
 import path from "path";
-import { createWriteStream, readFileSync } from "fs";
-import { JSDOM } from "jsdom";
+import { createWriteStream } from "fs";
 import fetch from "node-fetch";
+import { JSDOM } from "jsdom";
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const getHellofreshToken = async () => {
+  const res = await fetch("https://www.hellofresh.co.uk/");
+  const text = await res.text();
+  const dom = new JSDOM(text);
+  const nextData = JSON.parse(
+    dom.window.document.querySelector("script#__NEXT_DATA__[type='application/json']").textContent
+  );
 
-// const sitemapper = new Sitemapper({
-//   debug: true,
-//   requestHeaders: {
-//     "User-Agent": new UserAgent({ deviceCategory: "mobile"}),
-//   },
-// });
+  const token = nextData?.props?.pageProps?.ssrPayload?.serverAuth?.access_token;
+  return token;
+};
 
-// try {
-//   // This sitemap is guarded by cloudflare, are u kidding me.
-//   const recipes = await sitemapper.fetch("https://www.hellofresh.co.uk/sitemap_recipe_pages.xml");
-//   console.log(recipes);
-// } catch (e) {
-//   console.log(`ERRRRRRER`, e);
-// }
+async function* searchHelloFresh(country = "GB", locale = "en-GB", MAX_CALLS = 1000, MAX_PER_PAGE = 250) {
+  const token = await getHellofreshToken();
 
-const sitemapString = readFileSync(path.join(process.cwd(), "sitemap_recipe_pages.xml"));
-const {
-  urlset: { url: urlObjects },
-} = await parseStringPromise(sitemapString);
+  let take = MAX_PER_PAGE;
+  let skip = 0;
 
-const urls = urlObjects.map(({ loc }) => loc);
-const pdfUrls = [];
+  let calls = 0;
 
-console.log(`Searching ${urls.length} URLs for PDFs`);
-
-while (urls.length > 0) {
-  const url = urls.shift();
-  try {
-    const data = await fetch(url).then((r) => r.text());
-    const dom = new JSDOM(data);
-
-    const downloadLinkElem = dom.window.document.querySelector(
-      "[data-test-id='recipeDetailFragment.instructions.downloadLink']"
+  while (true) {
+    const res = await fetch(
+      "https://www.hellofresh.co.uk/gw/recipes/recipes/search?" +
+        new URLSearchParams({
+          country,
+          locale,
+          skip,
+          take,
+        }),
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     );
+    const data = await res.json();
+    const { count, total, items, unique_code } = data;
 
-    const pdfUrl = downloadLinkElem?.href;
+    // This means there was an error. This seems to happen on item 3493.
+    // To work around erroneous recipes, half the search space until we hit it
+    // Then skip over
+    if (unique_code) {
+      // We have found the troublesome recipe. Skip it
+      if (take == 1) {
+        skip++;
+        take = MAX_PER_PAGE;
+        continue;
+      }
 
-    if (!pdfUrl) {
-      throw new Error("no recipe card :(");
+      // Half the search space and try again. This will take us all the way up to the erroneous recipe
+      take = Math.max(take / 2, 1);
+      continue;
     }
 
-    const filename = path.basename(pdfUrl);
-    const filestream = createWriteStream(path.join(process.cwd(), `pdfs/${filename}`));
-    const res = await fetch(pdfUrl);
-    await new Promise((resolve, reject) => {
-      res.body.pipe(filestream);
-      res.body.on("error", reject);
-      filestream.on("finish", resolve);
-    });
-    console.log(`Saved ${filename}`);
-  } catch (e) {
-    console.log(`Skipping ${url} due to error`, e);
+    if (items.length === 0 || calls >= MAX_CALLS) {
+      break;
+    }
+
+    skip += count;
+    calls++;
+
+    for (const recipe of items) {
+      yield recipe;
+    }
   }
-  //   await sleep(100);
+}
+
+for await (const recipe of searchHelloFresh()) {
+  const { name, cardLink } = recipe;
+  // if (!cardLink) {
+  //   console.log(`Skipping ${name}; no card link`);
+  // }
+  console.log(name, cardLink);
+
+  if (process.env.DOWNLOAD_PDFS && cardLink) {
+    try {
+      // Filenames are formatted RECIPE-SOMEHASH-SOMEOTHERHASH.pdf
+      const filename = path.basename(cardLink);
+
+      // Skip "No picture available...yet" files, identifiable by SOMEOTHERHASH
+      if (filename.endsWith("39258edf.pdf")) {
+        console.log(`Skipping ${name} PDF because its the "no picture available" junk`);
+        continue;
+      }
+
+      const filestream = createWriteStream(path.join(process.cwd(), `pdfs/${filename}`));
+      const res = await fetch(cardLink);
+      await new Promise((resolve, reject) => {
+        res.body.pipe(filestream);
+        res.body.on("error", reject);
+        filestream.on("finish", resolve);
+      });
+
+      console.log(`Saved ${filename}`);
+    } catch (e) {
+      console.log("Error", e);
+    }
+  }
 }
