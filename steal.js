@@ -83,7 +83,7 @@ for await (const recipe of searchHelloFresh()) {
       const filename = path.basename(cardLink);
 
       // Skip "No picture available...yet" files, identifiable by SOMEOTHERHASH
-      if (filename.endsWith("39258edf.pdf")) {
+      if (filename.endsWith("39258edf.pdf") || filename.endsWith("25be3635.pdf")) {
         console.log(`Skipping ${name} PDF because its the "no picture available" junk`);
         continue;
       }
