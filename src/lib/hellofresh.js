@@ -1,9 +1,7 @@
-import path from "path";
-import { createWriteStream } from "fs";
 import fetch from "node-fetch";
 import { JSDOM } from "jsdom";
 
-const getHellofreshToken = async () => {
+const getToken = async () => {
   const res = await fetch("https://www.hellofresh.co.uk/");
   const text = await res.text();
   const dom = new JSDOM(text);
@@ -15,8 +13,8 @@ const getHellofreshToken = async () => {
   return token;
 };
 
-async function* searchHelloFresh(country = "GB", locale = "en-GB", MAX_CALLS = 1000, MAX_PER_PAGE = 250) {
-  const token = await getHellofreshToken();
+export async function* search(country = "GB", locale = "en-GB", MAX_CALLS = 1000, MAX_PER_PAGE = 250) {
+  const token = await getToken();
 
   let take = MAX_PER_PAGE;
   let skip = 0;
@@ -66,39 +64,6 @@ async function* searchHelloFresh(country = "GB", locale = "en-GB", MAX_CALLS = 1
 
     for (const recipe of items) {
       yield recipe;
-    }
-  }
-}
-
-for await (const recipe of searchHelloFresh()) {
-  const { name, cardLink } = recipe;
-  // if (!cardLink) {
-  //   console.log(`Skipping ${name}; no card link`);
-  // }
-  console.log(name, cardLink);
-
-  if (process.env.DOWNLOAD_PDFS && cardLink) {
-    try {
-      // Filenames are formatted RECIPE-SOMEHASH-SOMEOTHERHASH.pdf
-      const filename = path.basename(cardLink);
-
-      // Skip "No picture available...yet" files, identifiable by SOMEOTHERHASH
-      if (filename.endsWith("39258edf.pdf") || filename.endsWith("25be3635.pdf")) {
-        console.log(`Skipping ${name} PDF because its the "no picture available" junk`);
-        continue;
-      }
-
-      const filestream = createWriteStream(path.join(process.cwd(), `pdfs/${filename}`));
-      const res = await fetch(cardLink);
-      await new Promise((resolve, reject) => {
-        res.body.pipe(filestream);
-        res.body.on("error", reject);
-        filestream.on("finish", resolve);
-      });
-
-      console.log(`Saved ${filename}`);
-    } catch (e) {
-      console.log("Error", e);
     }
   }
 }
