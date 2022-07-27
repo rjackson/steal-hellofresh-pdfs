@@ -4,11 +4,14 @@
   "description": "",
   "type": "module",
   "scripts": {
+    "index": "node src/index.js",
     "steal": "node src/steal.js"
   },
   "author": "Rob Jackson",
   "license": "ISC",
   "dependencies": {
+    "algoliasearch": "^4.14.2",
+    "dotenv": "^16.0.1",
     "jsdom": "^20.0.0",
     "node-fetch": "^3.2.9"
   }
